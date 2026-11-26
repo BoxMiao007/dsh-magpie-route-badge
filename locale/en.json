@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-magpie route badge",
+    "description": "Adds a small, self-labelled magpie reading to the end of the statistics row below the composer (the same row as session/step stats, token usage and context used) showing the provider and model the local magpie gateway last routed THIS session to, e.g. DeepSeek · deepseek-v4.1-flash; while the newest request is a compaction, an extra 'compaction' reading appears (shown during compaction, removed after the next ordinary request) with the model used. Clicking the reading opens a panel like 'context used' listing the normal-request and compaction models this session has used. It stamps each magpie request with the DSH session id and reads the gateway's per-session route (http://127.0.0.1:3425/v1/magpie/route); model history comes from DSH Chat tokenUsage routes plus the Host-remembered latest compaction route. Nothing is sent over the network. The reading stays hidden until this session has a route."
+  }
+}

@@ -1,0 +1,4 @@
+# 插入一行 bundle：Host 半（index.js）注册只读路由，Client 半（client.js）绘制徽章。
+- insert:
+    - id: dsh-magpie-route-badge
+      name: '@local/dsh-magpie-route-badge'
