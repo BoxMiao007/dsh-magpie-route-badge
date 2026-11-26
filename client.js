@@ -1,5 +1,5 @@
 /**
- * magpie 路由徽章的 Client 半。
+ * magpie 路由状态的 Client 半。
  *
  * 在 `conversation.composer.dock`（输入框下方统计行，与 activity、usage、
  * 上下文圆环同一行）注册一个小读数，显示本地 magpie 网关最近一次把本会话
@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
 
     const DICTS = {
       zh: {
-        title: 'Magpie 路由',
+        title: 'Magpie 路由状态',
         tip: 'Magpie 最近一次把 DSH 请求路由到 {provider} · {model}',
         tipBare: 'Magpie 最近一次把 DSH 请求路由到 {model}',
         aria: 'Magpie 最近一次路由：{provider} · {model}',

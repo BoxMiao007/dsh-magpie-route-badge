@@ -2,7 +2,7 @@
   "name": "@local/dsh-magpie-route-badge",
   "version": "1.0.0",
   "private": true,
-  "description": "在输入框下方统计行显示本机 magpie 网关最近一次把当前 DSH 会话路由到的厂商和模型。",
+  "description": "在输入框下方统计行显示本机 magpie 网关的当前 DSH 会话路由状态和模型请求统计。",
   "type": "module",
   "exports": {
     ".": "./index.js",
