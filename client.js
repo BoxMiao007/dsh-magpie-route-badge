@@ -4,7 +4,7 @@
  * 在 `conversation.composer.dock`（输入框下方统计行，与 activity、usage、
  * 上下文圆环同一行）注册一个小读数，显示本地 magpie 网关最近一次把本会话
  * 路由到的「厂商 · 模型」；当最新请求是压缩时，末尾再显示压缩读数。点击读数
- * 会弹出本会话用过的模型面板（正常请求 / 压缩请求）。
+ * 会弹出本会话用过的 magpie / 非magpie 模型面板。
  *
  * 读数每 3 秒轮询 `/api/magpie.route?session=<id>`（由 index.js 提供）；
  * 两个点的呼吸动画由 Chat 快照实时驱动（流式输出 / 手动压缩），不依赖轮询。
@@ -28,7 +28,6 @@ window.__ModuleLoader__.load({
     const POLL_MS = 3000
     const REQUEST_TIMEOUT_MS = 4000
     const NS = 'magpieRoute'
-    let anchorSeq = 0
     let activityWarned = false
     let routesWarned = false
 
@@ -44,8 +43,10 @@ window.__ModuleLoader__.load({
         compactTip: '本会话压缩由 magpie 路由到 {provider} · {model}',
         compacting: '进行中…',
         panelTitle: '本会话路由模型',
-        normalSection: '正常请求模型',
-        compactSection: '压缩请求模型',
+        magpieSection: 'magpie路由模型',
+        magpieCompactSection: 'magpie压缩路由模型',
+        nonMagpieSection: '非magpie路由模型',
+        nonMagpieCompactSection: '非magpie压缩路由模型',
         empty: '暂无',
       },
       en: {
@@ -59,8 +60,10 @@ window.__ModuleLoader__.load({
         compactTip: 'Compaction of this session routed by magpie to {provider} · {model}',
         compacting: 'running…',
         panelTitle: 'Models this session used',
-        normalSection: 'Normal request models',
-        compactSection: 'Compaction models',
+        magpieSection: 'magpie route models',
+        magpieCompactSection: 'magpie compaction route models',
+        nonMagpieSection: 'non-magpie route models',
+        nonMagpieCompactSection: 'non-magpie compaction route models',
         empty: 'none',
       },
     }
@@ -70,8 +73,18 @@ window.__ModuleLoader__.load({
     const CSS = `
 .dsh-magpie-route-root{display:inline-flex;align-items:center;order:1;position:relative;flex:none;--dsh-magpie-compact:#a970ff}
 .dsh-magpie-route-badge{display:inline-flex;align-items:center;gap:0;box-sizing:border-box;flex:none;color:var(--dsw-alias-label-tertiary);font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));white-space:nowrap;font-variant-numeric:tabular-nums;user-select:none;background:none;border:0;margin:0;padding:0;font-family:inherit;text-align:left;cursor:pointer}
-.dsh-magpie-route-main{display:inline-flex;align-items:center;gap:6px;margin:-2px 0}
-.dsh-magpie-route-main:hover .dsh-magpie-route-model{color:var(--dsw-alias-label-primary)}
+.dsh-magpie-route-main{display:inline-flex;align-items:center;gap:6px;position:relative;isolation:isolate;color:var(--dsw-alias-label-tertiary)}
+.dsh-magpie-route-main::before{content:"";position:absolute;inset:-1px -8px;border-radius:var(--dsw-radius-sm);background:transparent;pointer-events:none;z-index:-1;transition:background-color .12s ease}
+.dsh-magpie-route-main:hover::before,
+.dsh-magpie-route-badge[aria-expanded="true"] .dsh-magpie-route-main::before{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-magpie-route-main:hover .dsh-magpie-route-name,
+.dsh-magpie-route-main:hover .dsh-magpie-route-provider,
+.dsh-magpie-route-main:hover .dsh-magpie-route-sep,
+.dsh-magpie-route-main:hover .dsh-magpie-route-model,
+.dsh-magpie-route-badge[aria-expanded="true"] .dsh-magpie-route-name,
+.dsh-magpie-route-badge[aria-expanded="true"] .dsh-magpie-route-provider,
+.dsh-magpie-route-badge[aria-expanded="true"] .dsh-magpie-route-sep,
+.dsh-magpie-route-badge[aria-expanded="true"] .dsh-magpie-route-model{color:var(--dsw-alias-label-secondary)}
 .dsh-magpie-route-badge:focus-visible{outline:none}
 .dsh-magpie-route-badge:focus-visible .dsh-magpie-route-main{outline:2px solid var(--dsw-alias-state-success-primary);outline-offset:2px}
 .dsh-magpie-route-dotwrap{position:relative;flex:none;width:6px;height:6px;--dot-color:var(--dsw-alias-state-success-primary)}
@@ -89,19 +102,19 @@ window.__ModuleLoader__.load({
 .dsh-magpie-route-compact{display:inline-flex;align-items:center;gap:5px;margin-left:10px}
 .dsh-magpie-route-compact-chip{display:inline-flex;align-items:center;padding:0 7px;border-radius:999px;border:1px solid color-mix(in srgb,var(--dsh-magpie-compact) 45%,transparent);background:color-mix(in srgb,var(--dsh-magpie-compact) 16%,transparent);color:var(--dsh-magpie-compact);line-height:18px}
 .dsh-magpie-route-compact-model{color:var(--dsw-alias-label-secondary)}
-.dsh-magpie-route-popover{z-index:1100;display:flex;flex-direction:column;align-items:flex-end}
-.dsh-magpie-route-panel{box-sizing:border-box;width:max-content;min-width:min(300px,calc(100vw - 24px));max-width:min(440px,calc(100vw - 24px));max-height:min(40vh,calc(100dvh - 16px));overflow-x:hidden;overflow-y:auto;padding:16px;border:0;border-radius:var(--dsw-radius-lg,10px);background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#222));backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent,0 10px 30px rgba(0,0,0,.4));font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);text-align:left;white-space:normal;cursor:default;position-try-fallbacks:--dsh-magpie-stat-window,--dsh-magpie-stat-opposite,--dsh-magpie-stat-wide-opposite,--dsh-magpie-stat-tall,--dsh-magpie-stat-viewport}
-@position-try --dsh-magpie-stat-window{top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:12px;left:12px;right:12px;align-self:safe end;justify-self:safe end}
-@position-try --dsh-magpie-stat-opposite{top:max(12px,calc(anchor(bottom) + 8px));bottom:12px;align-self:start}
-@position-try --dsh-magpie-stat-wide-opposite{top:max(12px,calc(anchor(bottom) + 8px));bottom:12px;left:12px;right:12px;align-self:start;justify-self:safe end}
-@position-try --dsh-magpie-stat-tall{top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:12px;left:max(12px,anchor(left));right:12px;align-self:safe start;justify-self:start}
-@position-try --dsh-magpie-stat-viewport{inset:max(12px,var(--dsh-frame-overlay-top,12px)) 12px 12px;align-self:safe start;justify-self:safe end}
+.dsh-magpie-route-popover{z-index:1100;display:flex;flex-direction:column;align-items:flex-end;--dsh-magpie-compact:#a970ff}
+.dsh-magpie-route-panel{box-sizing:border-box;width:max-content;min-width:min(300px,calc(100vw - 24px));max-width:min(440px,calc(100vw - 24px));max-height:min(40vh,calc(100dvh - 24px));overflow-x:hidden;overflow-y:auto;padding:16px;border:0;border-radius:var(--dsw-radius-lg,10px);background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#222));backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent,0 10px 30px rgba(0,0,0,.4));font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);text-align:left;white-space:normal;cursor:default}
 .dsh-magpie-route-sec{margin-top:16px}
 .dsh-magpie-route-sec:first-child{margin-top:0}
-.dsh-magpie-route-title{margin-bottom:8px;color:var(--dsw-alias-label-primary);font-weight:500}
+.dsh-magpie-route-title{display:flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--dsw-alias-label-primary);font-weight:500}
+.dsh-magpie-route-title-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-success-primary);flex:none}
+.dsh-magpie-route-title-dot-compact{background:var(--dsh-magpie-compact,#a970ff)}
+.dsh-magpie-route-title-count{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 .dsh-magpie-route-divider{margin:16px 0 0;border-top:1px solid var(--dsw-alias-border-l2)}
 .dsh-magpie-route-list{list-style:none;display:grid;gap:6px;margin:0;padding:0;color:var(--dsw-alias-label-tertiary)}
-.dsh-magpie-route-list li{min-width:0;white-space:normal;overflow-wrap:anywhere}
+.dsh-magpie-route-list li{display:flex;align-items:baseline;gap:8px;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.dsh-magpie-route-list-label{min-width:0}
+.dsh-magpie-route-list-count{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;flex:none}
 .dsh-magpie-route-empty{color:var(--dsw-alias-label-tertiary);opacity:.8;padding:2px 0}
 `
 
@@ -174,12 +187,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 从各 Turn 的精确 tokenUsage 路由汇总本会话用过的普通模型。
+     * 从各 Turn 的精确 tokenUsage 路由汇总本会话用过的模型；count 是该路由
+     * 在 tokenUsage.routes 中出现的次数，供非 magpie 分区回退使用。
      * @param snapshot - `useChat` 给出的 Chat 快照。
-     * @returns 去重后的模型标签列表。
+     * @returns `[{ label, provider, count }]`。
      */
     function readRoutes(snapshot) {
-      const seen = new Set()
+      const seen = new Map()
       try {
         const all = chatNodes(snapshot)
         for (const node of all) {
@@ -189,7 +203,10 @@ window.__ModuleLoader__.load({
           for (const route of routes) {
             if (route === null || typeof route !== 'object'
               || typeof route.provider !== 'string' || typeof route.model !== 'string') continue
-            seen.add(labelOf(route.provider, route.model))
+            const label = labelOf(route.provider, route.model)
+            const current = seen.get(label)
+            if (current === undefined) seen.set(label, { label, provider: route.provider, count: 1 })
+            else current.count += 1
           }
         }
       } catch (error) {
@@ -199,12 +216,13 @@ window.__ModuleLoader__.load({
         }
         return []
       }
-      return [...seen]
+      return [...seen.values()]
     }
 
     /** 路由标签列表不变时复用旧值，避免面板无谓重渲染。 */
     function sameRoutes(left, right) {
-      return left.length === right.length && left.every((label, index) => label === right[index])
+      return left.length === right.length && left.every((item, index) => item.label === right[index].label
+        && item.count === right[index].count && item.provider === right[index].provider)
     }
 
     function chatNodes(snapshot) {
@@ -213,6 +231,10 @@ window.__ModuleLoader__.load({
 
     function labelOf(provider, model) {
       return provider ? `${provider} · ${model}` : model
+    }
+
+    function isMagpieProvider(provider) {
+      return provider === 'magpie' || provider.startsWith('magpie-')
     }
 
     return {
@@ -224,20 +246,16 @@ window.__ModuleLoader__.load({
         function MagpieRouteBadge(props) {
           const [route, setRoute] = React.useState(null)
           const [open, setOpen] = React.useState(false)
+          const [coords, setCoords] = React.useState({ right: 12, bottom: 8 })
           const [breatheGreen, setBreatheGreen] = React.useState(false)
           const [breatheCompact, setBreatheCompact] = React.useState(false)
-          const reactId = typeof React.useId === 'function' ? React.useId() : null
           const rootRef = React.useRef(null)
           const panelRef = React.useRef(null)
           const greenDotRef = React.useRef(null)
           const compactDotRef = React.useRef(null)
           const breatheTimers = React.useRef({ green: null, compact: null })
           const normalSeenRef = React.useRef(new Map())
-          const anchorNameRef = React.useRef(null)
-          if (anchorNameRef.current === null) {
-            const suffix = reactId === null ? String(++anchorSeq) : reactId.replace(/[^a-zA-Z0-9_-]/g, '')
-            anchorNameRef.current = `--dsh-magpie-route-${suffix}`
-          }
+          const nonMagpieSeenRef = React.useRef(new Map())
           const sessionId = props && props.sessionId !== undefined && props.sessionId !== null ? String(props.sessionId) : ''
           // 来自 DSH Chat 快照的实时状态。
           const useChat = props ? props.useChat : undefined
@@ -249,7 +267,10 @@ window.__ModuleLoader__.load({
           const chatModels = typeof useChat === 'function' ? useChat(readRoutes, sameRoutes) : []
 
           React.useEffect(() => { setOpen(false) }, [sessionId])
-          React.useEffect(() => { normalSeenRef.current = new Map() }, [sessionId])
+          React.useEffect(() => {
+            normalSeenRef.current = new Map()
+            nonMagpieSeenRef.current = new Map()
+          }, [sessionId])
           React.useEffect(() => { if (route === null) setOpen(false) }, [route])
 
           /**
@@ -332,9 +353,15 @@ window.__ModuleLoader__.load({
                 const body = await response.json()
                 if (!alive) return
                 if (body && body.ok === true && body.model) {
-                  const compactionModels = Array.isArray(body.compactionModels)
-                    ? body.compactionModels.filter((label) => typeof label === 'string' && label.length > 0)
+                  const parseModelStats = (value) => Array.isArray(value)
+                    ? value.map((item) => item && typeof item.label === 'string' && item.label.length > 0
+                      ? { label: item.label, count: Number.isFinite(item.count) && item.count > 0 ? item.count : 1 }
+                      : null).filter((item) => item !== null)
                     : []
+                  const normalModels = parseModelStats(body.normalModels)
+                  const compactionModels = parseModelStats(body.compactionModels)
+                  const nonMagpieNormalModels = parseModelStats(body.nonMagpieNormalModels)
+                  const nonMagpieCompactionModels = parseModelStats(body.nonMagpieCompactionModels)
                   const compact = body.compact && body.compact !== null && body.compact.provider && body.compact.model
                     ? {
                         provider: String(body.compact.provider),
@@ -344,11 +371,23 @@ window.__ModuleLoader__.load({
                           : labelOf(String(body.compact.provider), String(body.compact.model)),
                       }
                     : null
-                  const next = { provider: String(body.provider || ''), model: String(body.model), compact, compactionModels, signature: '' }
+                  const next = {
+                    provider: String(body.provider || ''),
+                    model: String(body.model),
+                    compact,
+                    normalModels,
+                    compactionModels,
+                    nonMagpieNormalModels,
+                    nonMagpieCompactionModels,
+                    signature: '',
+                  }
                   next.signature = JSON.stringify({
                     p: next.provider, m: next.model,
                     c: compact === null ? null : [compact.provider, compact.model],
+                    n: normalModels,
                     ms: compactionModels,
+                    nn: nonMagpieNormalModels,
+                    mn: nonMagpieCompactionModels,
                   })
                   setRoute((prev) => (prev && prev.signature === next.signature ? prev : next))
                 } else if (body && body.ok === false && body.reason === 'no-route') {
@@ -373,9 +412,18 @@ window.__ModuleLoader__.load({
             }
           }, [sessionId])
 
-          // 面板由 CSS anchor 定位在读数上方；点击外部或 Escape 时关闭。
+          // 面板用固定定位贴在读数上方；点击外部或 Escape 时关闭。
           React.useEffect(() => {
             if (!open) return undefined
+            const measure = () => {
+              const el = rootRef.current
+              if (el === null) return
+              const rect = el.getBoundingClientRect()
+              setCoords({
+                right: Math.max(8, window.innerWidth - rect.right),
+                bottom: Math.max(8, window.innerHeight - rect.top + 8),
+              })
+            }
             const onPointerDown = (event) => {
               const root = rootRef.current
               const panel = panelRef.current
@@ -384,11 +432,16 @@ window.__ModuleLoader__.load({
               setOpen(false)
             }
             const onKeyDown = (event) => { if (event.key === 'Escape') setOpen(false) }
+            measure()
             document.addEventListener('pointerdown', onPointerDown, true)
             document.addEventListener('keydown', onKeyDown)
+            window.addEventListener('resize', measure)
+            window.addEventListener('scroll', measure, true)
             return () => {
               document.removeEventListener('pointerdown', onPointerDown, true)
               document.removeEventListener('keydown', onKeyDown)
+              window.removeEventListener('resize', measure)
+              window.removeEventListener('scroll', measure, true)
             }
           }, [open])
 
@@ -402,21 +455,57 @@ window.__ModuleLoader__.load({
           const compactModelText = route.compact !== null && route.compact.label
             ? route.compact.label
             : (showCompact ? t('compacting') : '')
-          if (route.compact === null) normalSeenRef.current.set(labelOf(route.provider, route.model), true)
-          for (const label of chatModels) normalSeenRef.current.set(label, true)
-          const normalModels = [...normalSeenRef.current.keys()]
-          const compactModels = route.compactionModels || []
+          if (route.compact === null) normalSeenRef.current.set(labelOf(route.provider, route.model), { label: labelOf(route.provider, route.model), count: 1 })
+          for (const item of chatModels) {
+            const target = isMagpieProvider(item.provider) ? normalSeenRef : nonMagpieSeenRef
+            const current = target.current.get(item.label)
+            if (current === undefined) target.current.set(item.label, { label: item.label, count: item.count })
+            else current.count += item.count
+          }
+          const magpieNormalModels = route.normalModels && route.normalModels.length > 0
+            ? route.normalModels
+            : [...normalSeenRef.current.values()]
+          const magpieCompactModels = route.compactionModels && route.compactionModels.length > 0
+            ? route.compactionModels
+            : (route.compact && route.compact.label ? [{ label: route.compact.label, count: 1 }] : [])
+          const nonMagpieNormalModels = route.nonMagpieNormalModels && route.nonMagpieNormalModels.length > 0
+            ? route.nonMagpieNormalModels
+            : [...nonMagpieSeenRef.current.values()]
+          const nonMagpieCompactModels = route.nonMagpieCompactionModels || []
 
-          const renderSection = (key, titleKey, list) => h('div', { key, className: 'dsh-magpie-route-sec' },
-            h('div', { className: 'dsh-magpie-route-title' }, t(titleKey)),
+          const renderSection = (key, titleKey, list, compact) => h('div', { key, className: 'dsh-magpie-route-sec' },
+            h('div', { className: 'dsh-magpie-route-title' },
+              h('span', {
+                key: 'dot',
+                className: `dsh-magpie-route-title-dot${compact ? ' dsh-magpie-route-title-dot-compact' : ''}`,
+                'aria-hidden': 'true',
+              }),
+              h('span', { key: 'label' }, t(titleKey)),
+              h('span', { key: 'count', className: 'dsh-magpie-route-title-count' }, String(list.length))),
             list.length === 0
               ? h('div', { className: 'dsh-magpie-route-empty' }, t('empty'))
               : h('ul', { className: 'dsh-magpie-route-list' },
-                  list.map((label, i) => h('li', { key: i, title: label }, label))))
+                  list.map((item, i) => h('li', { key: i, title: item.label },
+                    h('span', { key: 'label', className: 'dsh-magpie-route-list-label' }, item.label),
+                    h('span', { key: 'count', className: 'dsh-magpie-route-list-count' }, `×${String(item.count)}`)))))
+
+          const extraSections = []
+          if (nonMagpieNormalModels.length > 0) {
+            extraSections.push(
+              h('div', { key: 'divider-2', className: 'dsh-magpie-route-divider', 'aria-hidden': 'true' }),
+              renderSection('non-magpie', 'nonMagpieSection', nonMagpieNormalModels, false),
+            )
+          }
+          if (nonMagpieCompactModels.length > 0) {
+            extraSections.push(
+              h('div', { key: 'divider-3', className: 'dsh-magpie-route-divider', 'aria-hidden': 'true' }),
+              renderSection('non-magpie-compact', 'nonMagpieCompactSection', nonMagpieCompactModels, true),
+            )
+          }
 
           return h(React.Fragment, null,
             h('style', { key: 'style' }, CSS),
-            h('span', { key: 'root', className: 'dsh-magpie-route-root', ref: rootRef, style: { anchorName: anchorNameRef.current } },
+            h('span', { key: 'root', className: 'dsh-magpie-route-root', ref: rootRef },
               h('button', {
                 key: 'badge',
                 type: 'button',
@@ -454,20 +543,7 @@ window.__ModuleLoader__.load({
                       key: 'popover',
                       ref: panelRef,
                       className: 'dsh-magpie-route-popover',
-                      style: {
-                        position: 'fixed',
-                        positionAnchor: anchorNameRef.current,
-                        positionArea: 'none',
-                        top: 'max(12px, var(--dsh-frame-overlay-top, 12px))',
-                        bottom: 'max(12px, calc(anchor(top) + 8px))',
-                        left: 'max(12px, anchor(left))',
-                        right: '12px',
-                        alignSelf: 'end',
-                        justifySelf: 'start',
-                        height: 'fit-content',
-                        minHeight: 0,
-                        margin: 0,
-                      },
+                      style: { position: 'fixed', right: `${coords.right}px`, bottom: `${coords.bottom}px` },
                     },
                       h('div', {
                         key: 'panel',
@@ -475,9 +551,10 @@ window.__ModuleLoader__.load({
                         role: 'dialog',
                         'aria-label': t('panelTitle'),
                       },
-                        renderSection('normal', 'normalSection', normalModels),
-                        h('div', { key: 'divider', className: 'dsh-magpie-route-divider', 'aria-hidden': 'true' }),
-                        renderSection('compact', 'compactSection', compactModels)))
+                        renderSection('magpie', 'magpieSection', magpieNormalModels, false),
+                        h('div', { key: 'divider-1', className: 'dsh-magpie-route-divider', 'aria-hidden': 'true' }),
+                        renderSection('magpie-compact', 'magpieCompactSection', magpieCompactModels, true),
+                        ...extraSections))
                     return createPortal !== null ? createPortal(popover, document.body) : popover
                   })()
                 : null),

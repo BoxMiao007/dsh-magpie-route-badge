@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "dsh-magpie 路由徽章",
-    "description": "在输入框下方、与“会话统计 / Token 用量 / 上下文已用”同一行的统计行末尾，加一个带 magpie 标识的小读数，显示本机 magpie 网关最近一次把本会话路由到的厂商和模型，例如 DeepSeek · deepseek-v4.1-flash；当最新一次请求是压缩时，末尾再显示“压缩”读数（进行中即显示，下一次普通请求后移除）并标明压缩所用模型。点击读数会像“上下文已用”一样弹出面板，分「正常请求模型」「压缩请求模型」两段，列出本会话用过的模型。它给每个 magpie 请求带上 DSH 会话 id，并读取网关的按会话路由（http://127.0.0.1:3425/v1/magpie/route）；模型历史来自 DSH Chat 的 tokenUsage 路由与 Host 记住的最近压缩路由。只在本机进行，不向网络发送内容。本会话尚无路由时隐藏。"
+    "description": "在输入框下方、与“会话统计 / Token 用量 / 上下文已用”同一行的统计行末尾，加一个带 magpie 标识的小读数，显示本机 magpie 网关最近一次把本会话路由到的厂商和模型，例如 DeepSeek · deepseek-v4.1-flash；当最新一次请求是压缩时，末尾再显示“压缩”读数（进行中即显示，下一次普通请求后移除）并标明压缩所用模型。点击读数会像“上下文已用”一样弹出面板，分「magpie路由模型」「magpie压缩路由模型」「非magpie路由模型」「非magpie压缩路由模型」四段，显示模型数和每个模型的请求次数。它给每个 magpie 请求带上 DSH 会话 id，并读取网关的按会话路由（http://127.0.0.1:3425/v1/magpie/route）；magpie 模型请求次数来自本机 magpie usage.jsonl 的当前会话聚合，非 magpie 模型来自 Host 运行记录与 DSH Chat tokenUsage。只在本机进行，不向网络发送内容。本会话尚无路由时隐藏。"
   }
 }

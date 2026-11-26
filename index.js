@@ -9,11 +9,19 @@
  *   GET /api/magpie.route?session=<id> ->
  *     { ok, provider, model,
  *       compact: { provider, model, label } | null,
- *       compactionModels: [label] }
+ *       normalModels: [{ label, count }],
+ *       compactionModels: [{ label, count }],
+ *       nonMagpieNormalModels: [{ label, count }],
+ *       nonMagpieCompactionModels: [{ label, count }] }
  *
- * 本会话的普通请求模型历史由 Client 从 DSH Chat 的 `turn-tail.tokenUsage.routes`
- * 读取；Host 只补充“最近一次压缩路由”，因为它不在普通 Turn 的 tokenUsage 里。
+ * `normalModels` / `compactionModels` 的计数来自本机 magpie 的 usage.jsonl；
+ * `nonMagpie*` 只记录不经过 magpie 的 pi-ai 请求。Host 增量读取 usage.jsonl，
+ * 按会话与模型聚合，不返回其他会话的数据。
  */
+import { open, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 const ROUTE_PATH = '/api/magpie.route'
 const GATEWAY = 'http://127.0.0.1:3425'
 const PI_AI_PROVIDER = 'magpie'
@@ -31,6 +39,92 @@ function splitRoute(value) {
 
 function normSession(value) {
   return typeof value === 'string' ? value.trim().replace(/^session-/, '') : ''
+}
+
+const usageCache = { offset: 0, sessions: new Map() }
+
+function magpieUsageFile() {
+  const base = process.env.XDG_CONFIG_HOME
+    ? join(process.env.XDG_CONFIG_HOME, 'magpie')
+    : join(homedir(), '.config', 'magpie')
+  return join(base, 'usage.jsonl')
+}
+
+function canonicalLabel(label) {
+  return label.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
+}
+
+function ensureModelCount(list, label, count = 1) {
+  const key = canonicalLabel(label)
+  if (!list.some((item) => canonicalLabel(item.label) === key)) list.unshift({ label, count })
+}
+
+/** 把一批 usage JSONL 行并入会话计数；只统计主请求和压缩请求。 */
+function aggregateUsageLines(text, sessions) {
+  for (const line of text.split('\n')) {
+    if (line.trim().length === 0) continue
+    let row
+    try {
+      row = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (row === null || typeof row !== 'object' || row.agent !== 'dsh') continue
+    const kind = row.kind === undefined || row.kind === null ? 'normal' : row.kind
+    if (kind !== 'normal' && kind !== 'compact') continue
+    const key = normSession(row.session)
+    if (key.length === 0) continue
+    const provider = typeof row.provider === 'string' ? row.provider : ''
+    const model = typeof row.served === 'string' && row.served.length > 0
+      ? row.served
+      : (typeof row.model === 'string' ? row.model : '')
+    if (model.length === 0) continue
+    let byKind = sessions.get(key)
+    if (byKind === undefined) {
+      byKind = { normal: new Map(), compact: new Map() }
+      sessions.set(key, byKind)
+    }
+    const counts = byKind[kind]
+    const label = routeLabel(provider, model)
+    const labelKey = canonicalLabel(label)
+    const current = counts.get(labelKey)
+    if (current === undefined) counts.set(labelKey, { label, count: 1 })
+    else current.count += 1
+  }
+}
+
+/** 增量读取 usage.jsonl：首次全量建立索引，之后只解析追加行。 */
+async function readUsageStats(session, warn) {
+  try {
+    const file = magpieUsageFile()
+    const info = await stat(file)
+    if (info.size < usageCache.offset) {
+      usageCache.offset = 0
+      usageCache.sessions = new Map()
+    }
+    if (info.size > usageCache.offset) {
+      const length = info.size - usageCache.offset
+      const handle = await open(file, 'r')
+      try {
+        const buffer = Buffer.alloc(length)
+        await handle.read(buffer, 0, length, usageCache.offset)
+        const lastNewline = buffer.lastIndexOf(10)
+        if (lastNewline >= 0) {
+          aggregateUsageLines(buffer.subarray(0, lastNewline).toString('utf8'), usageCache.sessions)
+          usageCache.offset += lastNewline + 1
+        }
+      } finally {
+        await handle.close()
+      }
+    }
+    const byKind = usageCache.sessions.get(normSession(session))
+    if (byKind === undefined) return { normal: [], compact: [] }
+    const toList = (counts) => [...counts.values()].sort((a, b) => b.count - a.count)
+    return { normal: toList(byKind.normal), compact: toList(byKind.compact) }
+  } catch (error) {
+    warn('magpie-route-badge: 读取 usage 统计失败', error)
+    return { normal: [], compact: [] }
+  }
 }
 
 /**
@@ -84,6 +178,30 @@ const compactingSessions = new Set()
 const lastNormalRoute = new Map()
 /** 每个会话见过的压缩路由，按标签去重，供面板“压缩请求模型”使用。 */
 const compactionRoutes = new Map()
+/** 非 magpie provider 的运行时模型计数，按会话与普通/压缩分开。 */
+const externalRouteCounts = new Map()
+
+function rememberExternalRoute(key, provider, model, purpose) {
+  const kind = purpose === 'compaction' ? 'compact' : (purpose === 'assistant' || purpose === undefined || purpose === null ? 'normal' : null)
+  if (kind === null || typeof provider !== 'string' || provider.length === 0 || typeof model !== 'string' || model.length === 0) return
+  let bucket = externalRouteCounts.get(key)
+  if (bucket === undefined) {
+    bucket = { normal: new Map(), compact: new Map() }
+    externalRouteCounts.set(key, bucket)
+  }
+  const counts = bucket[kind]
+  const label = routeLabel(provider, model)
+  const labelKey = canonicalLabel(label)
+  const current = counts.get(labelKey)
+  if (current === undefined) counts.set(labelKey, { label, count: 1 })
+  else current.count += 1
+}
+
+function externalRouteList(key, kind) {
+  const bucket = externalRouteCounts.get(key)
+  if (bucket === undefined) return []
+  return [...bucket[kind].values()].sort((a, b) => b.count - a.count)
+}
 
 function rememberCompactionRoute(key, route) {
   let byLabel = compactionRoutes.get(key)
@@ -139,17 +257,20 @@ export function apply(ctx) {
       const sessionId = request === null || request === undefined ? undefined : request.sessionId
       const magpieProvider = typeof provider === 'string'
         && (provider === PI_AI_PROVIDER || provider.startsWith('magpie-'))
-      if (magpieProvider
-        && sessionId !== undefined && sessionId !== null && String(sessionId).length > 0) {
-        headers.set('x-magpie-session', String(sessionId))
-        // 只记录主对话请求：压缩、普通 assistant；标题/自动审查等辅助请求不算。
+      if (sessionId !== undefined && sessionId !== null && String(sessionId).length > 0) {
         const purpose = request.purpose
         const key = normSession(sessionId)
-        if (purpose === 'compaction') {
-          compactingSessions.add(key)
-          captureCompactionRoute(sessionId)
-        } else if (purpose === 'assistant' || purpose === undefined || purpose === null) {
-          compactingSessions.delete(key)
+        if (magpieProvider) {
+          headers.set('x-magpie-session', String(sessionId))
+          // 只记录主对话请求：压缩、普通 assistant；标题/自动审查等辅助请求不算。
+          if (purpose === 'compaction') {
+            compactingSessions.add(key)
+            captureCompactionRoute(sessionId)
+          } else if (purpose === 'assistant' || purpose === undefined || purpose === null) {
+            compactingSessions.delete(key)
+          }
+        } else {
+          rememberExternalRoute(key, provider, request.model, purpose)
         }
       }
     } catch (error) {
@@ -187,14 +308,20 @@ export function apply(ctx) {
           } else {
             lastNormalRoute.set(key, route)
           }
-          const byLabel = compactionRoutes.get(key)
-          const compactionModels = byLabel === undefined ? [] : [...byLabel.keys()]
+          const stats = await readUsageStats(session, warn)
+          const normalModels = [...stats.normal]
+          const compactionModels = [...stats.compact]
+          if (compact === null) ensureModelCount(normalModels, route.label)
+          else ensureModelCount(compactionModels, compact.label)
           return Response.json({
             ok: true,
             provider: route.provider,
             model: route.model,
             compact,
+            normalModels,
             compactionModels,
+            nonMagpieNormalModels: externalRouteList(key, 'normal'),
+            nonMagpieCompactionModels: externalRouteList(key, 'compact'),
           }, { headers: NO_STORE })
         } catch (error) {
           warn('magpie-route-badge: 路由查询失败', error)
