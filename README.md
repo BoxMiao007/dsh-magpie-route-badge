@@ -30,23 +30,17 @@
 
 ## 安装
 
-### 方式一：作为本地 link 依赖
+### 通过 GitHub 连接安装（Web profile）
 
-在 DSH profile 的依赖中加入本目录：
+先确认仓库可访问：<https://github.com/BoxMiao007/dsh-magpie-route-badge>
 
-```json
-{
-  "dependencies": {
-    "@local/dsh-magpie-route-badge": "link:D:/dev/github/dsh-magpie-route-badge"
-  }
-}
+然后在 DSH 的 `web` profile 中执行：
+
+```bash
+dsh plugin --profile web add github:BoxMiao007/dsh-magpie-route-badge
 ```
 
-然后重启 DSH Host，并刷新 Web 页面（F5）。
-
-### 方式二：通过 Plugins 安装
-
-在 DSH 的 **Plugins → Add plugin** 里选择本目录安装。安装后同样需要重启 Host。
+安装后重启 DSH Host，并刷新 Web 页面（F5）。
 
 > 修改了 Host 半 [`index.js`](./index.js) 后必须重启 DSH；只修改 Client 半 [`client.js`](./client.js) 时刷新页面即可。
 
